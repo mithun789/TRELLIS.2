@@ -23,7 +23,7 @@ def __getattr__(name):
     return globals()[name]
 
 
-def from_pretrained(path: str):
+def from_pretrained(path: str, **kwargs):
     """
     Load a pipeline from a model folder or a Hugging Face model hub.
 
@@ -42,7 +42,7 @@ def from_pretrained(path: str):
 
     with open(config_file, 'r') as f:
         config = json.load(f)
-    return globals()[config['name']].from_pretrained(path)
+    return globals()[config['name']].from_pretrained(path, **kwargs)
 
 
 # For PyLance

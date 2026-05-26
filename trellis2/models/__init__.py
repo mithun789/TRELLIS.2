@@ -1,4 +1,5 @@
 import importlib
+import torch
 
 __attributes = {
     # Sparse Structure
@@ -35,13 +36,15 @@ def __getattr__(name):
     return globals()[name]
 
 
-def from_pretrained(path: str, **kwargs):
+def from_pretrained(path: str, quantize_bits: int = 0, quantize_dtype: str = 'float16', **kwargs):
     """
     Load a model from a pretrained checkpoint.
 
     Args:
         path: The path to the checkpoint. Can be either local path or a Hugging Face model name.
               NOTE: config file and model file should take the name f'{path}.json' and f'{path}.safetensors' respectively.
+        quantize_bits: If set to 4, quantize the loaded model weights to 4-bit.
+        quantize_dtype: The dtype to use for dequantized weight computation (default: float16).
         **kwargs: Additional arguments for the model constructor.
     """
     import os
@@ -64,6 +67,20 @@ def from_pretrained(path: str, **kwargs):
         config = json.load(f)
     model = __getattr__(config['name'])(**config['args'], **kwargs)
     model.load_state_dict(load_file(model_file), strict=False)
+
+    if quantize_bits == 4:
+        from .quantization import quantize_model
+        dtype = {
+            'f16': torch.float16,
+            'fp16': torch.float16,
+            'float16': torch.float16,
+            'bf16': torch.bfloat16,
+            'bfloat16': torch.bfloat16,
+            'f32': torch.float32,
+            'fp32': torch.float32,
+            'float32': torch.float32,
+        }.get(quantize_dtype, torch.float16)
+        quantize_model(model, bits=quantize_bits, dtype=dtype)
 
     return model
 

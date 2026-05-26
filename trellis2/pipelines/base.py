@@ -19,7 +19,7 @@ class Pipeline:
             model.eval()
 
     @classmethod
-    def from_pretrained(cls, path: str, config_file: str = "pipeline.json") -> "Pipeline":
+    def from_pretrained(cls, path: str, config_file: str = "pipeline.json", quantize_bits: int = 0, quantize_dtype: str = 'float16') -> "Pipeline":
         """
         Load a pretrained model.
         """
@@ -41,9 +41,9 @@ class Pipeline:
             if hasattr(cls, 'model_names_to_load') and k not in cls.model_names_to_load:
                 continue
             try:
-                _models[k] = models.from_pretrained(f"{path}/{v}")
+                _models[k] = models.from_pretrained(f"{path}/{v}", quantize_bits=quantize_bits, quantize_dtype=quantize_dtype)
             except Exception as e:
-                _models[k] = models.from_pretrained(v)
+                _models[k] = models.from_pretrained(v, quantize_bits=quantize_bits, quantize_dtype=quantize_dtype)
 
         new_pipeline = cls(_models)
         new_pipeline._pretrained_args = args
