@@ -57,7 +57,7 @@ Data processing is streamlined for instant conversions that are fully **renderin
 
 ### Prerequisites
 - **System**: The code is currently tested only on **Linux**.
-- **Hardware**: An NVIDIA GPU with at least 24GB of memory is necessary. The code has been verified on NVIDIA A100 and H100 GPUs.  
+- **Hardware**: An NVIDIA GPU with at least 24GB of memory is recommended. 8GB GPUs work with the `8gb` profile, see [Low-VRAM GPUs](#low-vram-gpus-8-gb). The code has been verified on NVIDIA A100 and H100 GPUs.  
 - **Software**:   
   - The [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit-archive) is needed to compile certain packages. Recommended version is 12.4.  
   - [Conda](https://docs.anaconda.com/miniconda/install/#quick-command-line-install) is recommended for managing dependencies.  
@@ -172,6 +172,44 @@ Upon execution, the script generates the following files:
  - `sample.glb`: The extracted PBR-ready 3D asset in GLB format.
 
 **Note:** The `.glb` file is exported in `OPAQUE` mode by default. Although the alpha channel is preserved within the texture map, it is not active initially. To enable transparency, import the asset into your 3D software and manually connect the texture's alpha channel to the material's opacity or alpha input.
+
+#### Low-VRAM GPUs (8 GB)
+
+TRELLIS.2 runs on 8 GB cards with the `8gb` profile. The profile:
+- Keeps one model on the GPU at a time. Weights stay in pinned host memory, so each stage swap is a single fast host-to-GPU copy with no copy back.
+- Generates at 1024³ (`1024_cascade`). On CUDA out-of-memory it frees the GPU and retries at a lower resolution.
+- Exports a 100k-face mesh with a baked tangent-space normal map. The normal map carries the detail of the multi-million-face source mesh, so the low-poly GLB keeps sharp surface detail.
+
+```sh
+# Command line
+python example_8gb.py --image assets/example_image/T.png --out sample.glb
+python example_8gb.py --image my.png --faces 50000 --texture-size 4096 --video
+
+# Web demo
+TRELLIS2_VRAM_PROFILE=8gb python app.py
+```
+
+| Profile | Generation | Export faces | Texture | Normal map |
+| :--- | :--- | :--- | :--- | :--- |
+| `8gb` | 1024³ cascade, offload | 100k | 2048 | yes |
+| `12gb` | 1024³ cascade, offload | 200k | 4096 | yes |
+| `24gb` (default) | pipeline default | 1M | 4096 | no |
+
+In your own code:
+
+```python
+from trellis2.utils import vram_profiles
+vram_profiles.apply_runtime_settings()
+profile = vram_profiles.get_profile('8gb')
+pipeline = vram_profiles.load_pipeline('microsoft/TRELLIS.2-4B', profile)
+mesh = vram_profiles.run_with_fallback(pipeline, image, profile)[0]
+glb = o_voxel.postprocess.to_glb(..., **profile['glb'])
+```
+
+Notes:
+- Normal map baking lives in `o-voxel`. Reinstall it after pulling: `. ./setup.sh --o-voxel`.
+- Pinned memory locks host RAM equal to the model size (about 8 GB). With 16 GB of system RAM or less, set `TRELLIS2_PIN_MEMORY=0`.
+- Use `--steps 8` for faster generation at a small quality cost.
 
 #### Web Demo
 

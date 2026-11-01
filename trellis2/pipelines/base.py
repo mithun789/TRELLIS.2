@@ -2,6 +2,7 @@ from typing import *
 import torch
 import torch.nn as nn
 from .. import models
+from ..utils.offload import ModelOffloader
 
 
 class Pipeline:
@@ -60,6 +61,29 @@ class Pipeline:
             if hasattr(model, 'parameters'):
                 return next(model.parameters()).device
         raise RuntimeError("No device found.")
+
+    @property
+    def offloader(self) -> ModelOffloader:
+        if getattr(self, '_offloader', None) is None:
+            self._offloader = ModelOffloader()
+        return self._offloader
+
+    def _onload(self, model) -> None:
+        """Move a model to the pipeline device (low-VRAM mode)."""
+        self.offloader.onload(model, self.device)
+
+    def _offload(self, model) -> None:
+        """Release a model's GPU memory (low-VRAM mode)."""
+        self.offloader.offload(model)
+
+    def offload_all(self) -> None:
+        """Move every model off the GPU, e.g. after an out-of-memory error."""
+        for model in self.models.values():
+            self._offload(model)
+        for name in ('image_cond_model', 'rembg_model'):
+            extra = getattr(self, name, None)
+            if extra is not None:
+                self._offload(extra)
 
     def to(self, device: torch.device) -> None:
         for model in self.models.values():

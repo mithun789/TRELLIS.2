@@ -2,7 +2,11 @@ import gradio as gr
 
 import os
 os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+from trellis2.utils import vram_profiles
+vram_profiles.apply_runtime_settings()
+# Pick a profile with TRELLIS2_VRAM_PROFILE=8gb|12gb|24gb (default 24gb)
+PROFILE = vram_profiles.get_profile()
 from datetime import datetime
 import shutil
 import cv2
@@ -368,8 +372,10 @@ def image_to_3d(
     progress=gr.Progress(track_tqdm=True),
 ) -> str:
     # --- Sampling ---
-    outputs, latents = pipeline.run(
+    outputs, latents = vram_profiles.run_with_fallback(
+        pipeline,
         image,
+        PROFILE,
         seed=seed,
         preprocess_image=False,
         sparse_structure_sampler_params={
@@ -398,7 +404,7 @@ def image_to_3d(
         return_latent=True,
     )
     mesh = outputs[0]
-    mesh.simplify(16777216) # nvdiffrast limit
+    mesh.simplify(PROFILE['preview_max_faces']) # nvdiffrast limit is 16777216
     images = render_utils.render_snapshot(mesh, resolution=1024, r=2, fov=36, nviews=STEPS, envmap=envmap)
     state = pack_state(latents)
     torch.cuda.empty_cache()
@@ -473,6 +479,7 @@ def extract_glb(
     state: dict,
     decimation_target: int,
     texture_size: int,
+    bake_normal_map: bool,
     req: gr.Request,
     progress=gr.Progress(track_tqdm=True),
 ) -> Tuple[str, str]:
@@ -483,6 +490,7 @@ def extract_glb(
         state (dict): The state of the generated 3D model.
         decimation_target (int): The target face count for decimation.
         texture_size (int): The texture resolution.
+        bake_normal_map (bool): Bake high-res detail into a normal map.
 
     Returns:
         str: The path to the extracted GLB file.
@@ -503,6 +511,7 @@ def extract_glb(
         remesh=True,
         remesh_band=1,
         remesh_project=0,
+        bake_normal_map=bake_normal_map,
         use_tqdm=True,
     )
     now = datetime.now()
@@ -528,8 +537,9 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
             resolution = gr.Radio(["512", "1024", "1536"], label="Resolution", value="1024")
             seed = gr.Slider(0, MAX_SEED, label="Seed", value=0, step=1)
             randomize_seed = gr.Checkbox(label="Randomize Seed", value=True)
-            decimation_target = gr.Slider(100000, 1000000, label="Decimation Target", value=500000, step=10000)
-            texture_size = gr.Slider(1024, 4096, label="Texture Size", value=2048, step=1024)
+            decimation_target = gr.Slider(10000, 1000000, label="Decimation Target (faces)", value=PROFILE['glb']['decimation_target'], step=10000)
+            texture_size = gr.Slider(1024, 4096, label="Texture Size", value=PROFILE['glb']['texture_size'], step=1024)
+            bake_normal_map = gr.Checkbox(label="Bake Normal Map (keeps detail at low face counts)", value=PROFILE['glb']['bake_normal_map'])
             
             generate_btn = gr.Button("Generate")
                 
@@ -609,7 +619,7 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
         lambda: gr.Walkthrough(selected=1), outputs=walkthrough
     ).then(
         extract_glb,
-        inputs=[output_buf, decimation_target, texture_size],
+        inputs=[output_buf, decimation_target, texture_size, bake_normal_map],
         outputs=[glb_output, download_btn],
     )
         
@@ -624,8 +634,8 @@ if __name__ == "__main__":
         icon = Image.open(MODES[i]['icon'])
         MODES[i]['icon_base64'] = image_to_base64(icon)
 
-    pipeline = Trellis2ImageTo3DPipeline.from_pretrained('microsoft/TRELLIS.2-4B')
-    pipeline.cuda()
+    pipeline = vram_profiles.load_pipeline('microsoft/TRELLIS.2-4B', PROFILE)
+    print(f"VRAM profile: {PROFILE['name']}")
     
     envmap = {
         'forest': EnvMap(torch.tensor(
