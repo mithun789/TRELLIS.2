@@ -1,5 +1,5 @@
 # Read Arguments
-TEMP=`getopt -o h --long help,new-env,basic,flash-attn,cumesh,o-voxel,flexgemm,nvdiffrast,nvdiffrec -n 'setup.sh' -- "$@"`
+TEMP=`getopt -o h --long help,new-env,basic,flash-attn,cumesh,o-voxel,flexgemm,nvdiffrast,nvdiffrec,blender -n 'setup.sh' -- "$@"`
 
 eval set -- "$TEMP"
 
@@ -12,6 +12,7 @@ OVOXEL=false
 FLEXGEMM=false
 NVDIFFRAST=false
 NVDIFFREC=false
+BLENDER=false
 ERROR=false
 
 
@@ -30,6 +31,7 @@ while true ; do
         --flexgemm) FLEXGEMM=true ; shift ;;
         --nvdiffrast) NVDIFFRAST=true ; shift ;;
         --nvdiffrec) NVDIFFREC=true ; shift ;;
+        --blender) BLENDER=true ; shift ;;
         --) shift ; break ;;
         *) ERROR=true ; break ;;
     esac
@@ -52,6 +54,7 @@ if [ "$HELP" = true ] ; then
     echo "  --flexgemm              Install flexgemm"
     echo "  --nvdiffrast            Install nvdiffrast"
     echo "  --nvdiffrec             Install nvdiffrec"
+    echo "  --blender               Install Blender 4.5 LTS (for FBX export)"
     return
 fi
 
@@ -136,4 +139,18 @@ if [ "$OVOXEL" = true ] ; then
     mkdir -p /tmp/extensions
     cp -r o-voxel /tmp/extensions/o-voxel
     pip install /tmp/extensions/o-voxel --no-build-isolation
+fi
+
+if [ "$BLENDER" = true ] ; then
+    BLENDER_DIR="$HOME/.local/share/trellis2"
+    BLENDER_NAME="blender-4.5.1-linux-x64"
+    if [ ! -x "$BLENDER_DIR/$BLENDER_NAME/blender" ] ; then
+        mkdir -p "$BLENDER_DIR"
+        wget -q --show-progress -O "$BLENDER_DIR/$BLENDER_NAME.tar.xz" \
+            "https://download.blender.org/release/Blender4.5/$BLENDER_NAME.tar.xz"
+        tar -xf "$BLENDER_DIR/$BLENDER_NAME.tar.xz" -C "$BLENDER_DIR"
+        rm "$BLENDER_DIR/$BLENDER_NAME.tar.xz"
+    fi
+    echo "Blender installed at $BLENDER_DIR/$BLENDER_NAME/blender"
+    echo "Headless Blender needs these system libraries: sudo apt-get install -y libxrender1 libxi6 libxkbcommon-x11-0 libsm6 libxfixes3 libgl1"
 fi

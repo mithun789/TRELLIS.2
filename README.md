@@ -97,6 +97,7 @@ Data processing is streamlined for instant conversions that are fully **renderin
         --flexgemm              Install flexgemm
         --nvdiffrast            Install nvdiffrast
         --nvdiffrec             Install nvdiffrec
+    --blender               Install Blender 4.5 LTS (for FBX export)
     ```
 
 ## 📦 Pretrained Weights
@@ -210,6 +211,36 @@ Notes:
 - Normal map baking lives in `o-voxel`. Reinstall it after pulling: `. ./setup.sh --o-voxel`.
 - Pinned memory locks host RAM equal to the model size (about 8 GB). With 16 GB of system RAM or less, set `TRELLIS2_PIN_MEMORY=0`.
 - Use `--steps 8` for faster generation at a small quality cost.
+
+#### FBX Export
+
+Save assets as `.fbx` for Unity, Unreal, Maya, and 3ds Max. The FBX embeds the base color, alpha, roughness, metallic, and normal map textures as PNG.
+
+FBX export runs through Blender. Install it once:
+
+```sh
+. ./setup.sh --blender      # downloads Blender 4.5 LTS to ~/.local/share/trellis2
+```
+
+Other options: the `bpy` pip package (needs the Python version bpy was built for), Blender on your `PATH`, or `TRELLIS2_BLENDER=/path/to/blender`.
+
+```sh
+# Generate and export GLB + FBX
+python example_8gb.py --image my.png --out model.glb --fbx
+
+# Convert an existing GLB
+python trellis2/utils/fbx_export.py model.glb model.fbx
+```
+
+In the web demo, tick **Also export FBX** before **Extract GLB**. A **Download FBX** button shows up next to the GLB download.
+
+In your own code:
+
+```python
+from trellis2.utils import fbx_export
+glb = o_voxel.postprocess.to_glb(...)
+fbx_export.export_fbx(glb, 'model.fbx')
+```
 
 #### Web Demo
 

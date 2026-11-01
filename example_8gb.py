@@ -6,6 +6,7 @@ high-resolution surface detail.
 
     python example_8gb.py --image assets/example_image/T.png --out sample.glb
     python example_8gb.py --image my.png --faces 50000 --texture-size 4096 --video
+    python example_8gb.py --image my.png --fbx      # also save model.fbx (needs Blender)
 """
 import argparse
 import os
@@ -38,7 +39,15 @@ def main():
                         help='Sampling steps for every stage. Fewer steps run faster (default 12).')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--video', action='store_true', help='Also render a preview video.')
+    parser.add_argument('--fbx', action='store_true', help='Also save an FBX with embedded textures (needs Blender).')
+    parser.add_argument('--blender', default=None, help='Path to the Blender executable for --fbx.')
     args = parser.parse_args()
+
+    if args.fbx:
+        from trellis2.utils import fbx_export
+        # Check before the long generation run, not after.
+        if not fbx_export.fbx_available(args.blender):
+            parser.error('--fbx needs Blender. Run `. ./setup.sh --blender`, or pass --blender PATH.')
 
     profile = vram_profiles.get_profile(args.profile)
     glb_args = dict(profile['glb'])
@@ -107,6 +116,11 @@ def main():
     print(f'Export: {time.time() - t0:.1f}s, {vram_profiles.peak_memory_report()}')
     print(f'Saved {args.out} ({glb_args["decimation_target"]} target faces, '
           f'{glb_args["texture_size"]}px textures, normal map: {glb_args["bake_normal_map"]})')
+
+    if args.fbx:
+        t0 = time.time()
+        fbx_path = fbx_export.export_fbx(glb, os.path.splitext(args.out)[0] + '.fbx', blender=args.blender)
+        print(f'Saved {fbx_path} in {time.time() - t0:.1f}s')
 
 
 if __name__ == '__main__':

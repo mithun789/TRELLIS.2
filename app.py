@@ -19,7 +19,7 @@ import io
 from trellis2.modules.sparse import SparseTensor
 from trellis2.pipelines import Trellis2ImageTo3DPipeline
 from trellis2.renderers import EnvMap
-from trellis2.utils import render_utils
+from trellis2.utils import render_utils, fbx_export
 import o_voxel
 
 
@@ -480,9 +480,10 @@ def extract_glb(
     decimation_target: int,
     texture_size: int,
     bake_normal_map: bool,
+    export_fbx: bool,
     req: gr.Request,
     progress=gr.Progress(track_tqdm=True),
-) -> Tuple[str, str]:
+) -> Tuple[str, str, Optional[str]]:
     """
     Extract a GLB file from the 3D model.
 
@@ -491,6 +492,7 @@ def extract_glb(
         decimation_target (int): The target face count for decimation.
         texture_size (int): The texture resolution.
         bake_normal_map (bool): Bake high-res detail into a normal map.
+        export_fbx (bool): Also write an FBX file (needs Blender).
 
     Returns:
         str: The path to the extracted GLB file.
@@ -520,7 +522,13 @@ def extract_glb(
     glb_path = os.path.join(user_dir, f'sample_{timestamp}.glb')
     glb.export(glb_path, extension_webp=True)
     torch.cuda.empty_cache()
-    return glb_path, glb_path
+    fbx_path = None
+    if export_fbx:
+        try:
+            fbx_path = fbx_export.export_fbx(glb, os.path.splitext(glb_path)[0] + '.fbx')
+        except Exception as e:
+            gr.Warning(f"FBX export failed: {e}")
+    return glb_path, glb_path, gr.update(value=fbx_path, visible=fbx_path is not None)
 
 
 with gr.Blocks(delete_cache=(600, 600)) as demo:
@@ -540,6 +548,11 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
             decimation_target = gr.Slider(10000, 1000000, label="Decimation Target (faces)", value=PROFILE['glb']['decimation_target'], step=10000)
             texture_size = gr.Slider(1024, 4096, label="Texture Size", value=PROFILE['glb']['texture_size'], step=1024)
             bake_normal_map = gr.Checkbox(label="Bake Normal Map (keeps detail at low face counts)", value=PROFILE['glb']['bake_normal_map'])
+            export_fbx = gr.Checkbox(
+                label="Also export FBX" + ("" if fbx_export.fbx_available() else " (install Blender: . ./setup.sh --blender)"),
+                value=False,
+                interactive=fbx_export.fbx_available(),
+            )
             
             generate_btn = gr.Button("Generate")
                 
@@ -571,6 +584,7 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
                 with gr.Step("Extract", id=1):
                     glb_output = gr.Model3D(label="Extracted GLB", height=724, show_label=True, display_mode="solid", clear_color=(0.25, 0.25, 0.25, 1.0))
                     download_btn = gr.DownloadButton(label="Download GLB")
+                    download_fbx_btn = gr.DownloadButton(label="Download FBX", visible=False)
                     
         with gr.Column(scale=1, min_width=172):
             examples = gr.Examples(
@@ -619,8 +633,8 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
         lambda: gr.Walkthrough(selected=1), outputs=walkthrough
     ).then(
         extract_glb,
-        inputs=[output_buf, decimation_target, texture_size, bake_normal_map],
-        outputs=[glb_output, download_btn],
+        inputs=[output_buf, decimation_target, texture_size, bake_normal_map, export_fbx],
+        outputs=[glb_output, download_btn, download_fbx_btn],
     )
         
 
