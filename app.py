@@ -2,7 +2,11 @@ import gradio as gr
 
 import os
 os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+from trellis2.utils import vram_profiles
+vram_profiles.apply_runtime_settings()
+# Pick a profile with TRELLIS2_VRAM_PROFILE=8gb|12gb|24gb (default 24gb)
+PROFILE = vram_profiles.get_profile()
 from datetime import datetime
 import shutil
 import cv2
@@ -15,7 +19,7 @@ import io
 from trellis2.modules.sparse import SparseTensor
 from trellis2.pipelines import Trellis2ImageTo3DPipeline
 from trellis2.renderers import EnvMap
-from trellis2.utils import render_utils
+from trellis2.utils import render_utils, fbx_export
 import o_voxel
 
 
@@ -368,8 +372,10 @@ def image_to_3d(
     progress=gr.Progress(track_tqdm=True),
 ) -> str:
     # --- Sampling ---
-    outputs, latents = pipeline.run(
+    outputs, latents = vram_profiles.run_with_fallback(
+        pipeline,
         image,
+        PROFILE,
         seed=seed,
         preprocess_image=False,
         sparse_structure_sampler_params={
@@ -398,7 +404,7 @@ def image_to_3d(
         return_latent=True,
     )
     mesh = outputs[0]
-    mesh.simplify(16777216) # nvdiffrast limit
+    mesh.simplify(PROFILE['preview_max_faces']) # nvdiffrast limit is 16777216
     images = render_utils.render_snapshot(mesh, resolution=1024, r=2, fov=36, nviews=STEPS, envmap=envmap)
     state = pack_state(latents)
     torch.cuda.empty_cache()
@@ -473,9 +479,11 @@ def extract_glb(
     state: dict,
     decimation_target: int,
     texture_size: int,
+    bake_normal_map: bool,
+    export_fbx: bool,
     req: gr.Request,
     progress=gr.Progress(track_tqdm=True),
-) -> Tuple[str, str]:
+) -> Tuple[str, str, Optional[str]]:
     """
     Extract a GLB file from the 3D model.
 
@@ -483,6 +491,8 @@ def extract_glb(
         state (dict): The state of the generated 3D model.
         decimation_target (int): The target face count for decimation.
         texture_size (int): The texture resolution.
+        bake_normal_map (bool): Bake high-res detail into a normal map.
+        export_fbx (bool): Also write an FBX file (needs Blender).
 
     Returns:
         str: The path to the extracted GLB file.
@@ -503,6 +513,7 @@ def extract_glb(
         remesh=True,
         remesh_band=1,
         remesh_project=0,
+        bake_normal_map=bake_normal_map,
         use_tqdm=True,
     )
     now = datetime.now()
@@ -511,7 +522,13 @@ def extract_glb(
     glb_path = os.path.join(user_dir, f'sample_{timestamp}.glb')
     glb.export(glb_path, extension_webp=True)
     torch.cuda.empty_cache()
-    return glb_path, glb_path
+    fbx_path = None
+    if export_fbx:
+        try:
+            fbx_path = fbx_export.export_fbx(glb, os.path.splitext(glb_path)[0] + '.fbx')
+        except Exception as e:
+            gr.Warning(f"FBX export failed: {e}")
+    return glb_path, glb_path, gr.update(value=fbx_path, visible=fbx_path is not None)
 
 
 with gr.Blocks(delete_cache=(600, 600)) as demo:
@@ -528,8 +545,14 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
             resolution = gr.Radio(["512", "1024", "1536"], label="Resolution", value="1024")
             seed = gr.Slider(0, MAX_SEED, label="Seed", value=0, step=1)
             randomize_seed = gr.Checkbox(label="Randomize Seed", value=True)
-            decimation_target = gr.Slider(100000, 1000000, label="Decimation Target", value=500000, step=10000)
-            texture_size = gr.Slider(1024, 4096, label="Texture Size", value=2048, step=1024)
+            decimation_target = gr.Slider(10000, 1000000, label="Decimation Target (faces)", value=PROFILE['glb']['decimation_target'], step=10000)
+            texture_size = gr.Slider(1024, 4096, label="Texture Size", value=PROFILE['glb']['texture_size'], step=1024)
+            bake_normal_map = gr.Checkbox(label="Bake Normal Map (keeps detail at low face counts)", value=PROFILE['glb']['bake_normal_map'])
+            export_fbx = gr.Checkbox(
+                label="Also export FBX" + ("" if fbx_export.fbx_available() else " (install Blender: . ./setup.sh --blender)"),
+                value=False,
+                interactive=fbx_export.fbx_available(),
+            )
             
             generate_btn = gr.Button("Generate")
                 
@@ -561,6 +584,7 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
                 with gr.Step("Extract", id=1):
                     glb_output = gr.Model3D(label="Extracted GLB", height=724, show_label=True, display_mode="solid", clear_color=(0.25, 0.25, 0.25, 1.0))
                     download_btn = gr.DownloadButton(label="Download GLB")
+                    download_fbx_btn = gr.DownloadButton(label="Download FBX", visible=False)
                     
         with gr.Column(scale=1, min_width=172):
             examples = gr.Examples(
@@ -609,8 +633,8 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
         lambda: gr.Walkthrough(selected=1), outputs=walkthrough
     ).then(
         extract_glb,
-        inputs=[output_buf, decimation_target, texture_size],
-        outputs=[glb_output, download_btn],
+        inputs=[output_buf, decimation_target, texture_size, bake_normal_map, export_fbx],
+        outputs=[glb_output, download_btn, download_fbx_btn],
     )
         
 
@@ -624,8 +648,8 @@ if __name__ == "__main__":
         icon = Image.open(MODES[i]['icon'])
         MODES[i]['icon_base64'] = image_to_base64(icon)
 
-    pipeline = Trellis2ImageTo3DPipeline.from_pretrained('microsoft/TRELLIS.2-4B')
-    pipeline.cuda()
+    pipeline = vram_profiles.load_pipeline('microsoft/TRELLIS.2-4B', PROFILE)
+    print(f"VRAM profile: {PROFILE['name']}")
     
     envmap = {
         'forest': EnvMap(torch.tensor(

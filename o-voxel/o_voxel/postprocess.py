@@ -9,6 +9,7 @@ import trimesh.visual
 from flex_gemm.ops.grid_sample import grid_sample_3d
 import nvdiffrast.torch as dr
 import cumesh
+from . import normal_map as _nm
 
 
 def to_glb(
@@ -29,6 +30,7 @@ def to_glb(
     mesh_cluster_refine_iterations=0,
     mesh_cluster_global_iterations=1,
     mesh_cluster_smooth_strength=1,
+    bake_normal_map: bool = False,
     verbose: bool = False,
     use_tqdm: bool = False,
 ):
@@ -54,6 +56,8 @@ def to_glb(
         mesh_cluster_refine_iterations: number of iterations for refining clusters in uv unwrapping
         mesh_cluster_global_iterations: number of global iterations for clustering in uv unwrapping
         mesh_cluster_smooth_strength: strength of smoothing for clustering in uv unwrapping
+        bake_normal_map: bake the normals of the original high-resolution mesh into a
+            tangent-space normal map. Keeps fine surface detail on a low face count mesh.
         verbose: whether to print verbose messages
         use_tqdm: whether to use tqdm to display progress bar
     """
@@ -264,6 +268,22 @@ def to_glb(
         grid=((valid_pos - aabb[0]) / voxel_size).reshape(1, -1, 3),
         mode='trilinear',
     )
+
+    # Normal map: original high-res normals expressed in the low-poly tangent frame
+    normal_tex = None
+    if bake_normal_map:
+        hi_vn = _nm.vertex_normals(vertices.float(), faces)
+        hi_n = (hi_vn[faces[face_id.long()].long()] * uvw.unsqueeze(-1)).sum(dim=1)
+        lo_n = dr.interpolate(out_normals.unsqueeze(0).float().contiguous(), rast, out_faces)[0][0][mask]
+        lo_face = (rast[0][mask][:, 3] - 1).long()
+        dp_du, dp_dv = _nm.face_uv_gradients(out_vertices.float(), out_faces, out_uvs.float())
+        ts = _nm.encode_tangent_space(hi_n, lo_n, dp_du[lo_face], dp_dv[lo_face])
+        normal_tex = torch.zeros(texture_size, texture_size, 3, dtype=torch.uint8, device='cuda')
+        normal_tex[..., 0] = 128
+        normal_tex[..., 1] = 128
+        normal_tex[..., 2] = 255
+        normal_tex[mask] = _nm.tangent_space_to_rgb(ts)
+        del hi_vn, hi_n, lo_n, lo_face, dp_du, dp_dv, ts
     if use_tqdm:
         pbar.update(1)
     if verbose:
@@ -290,6 +310,8 @@ def to_glb(
     metallic = cv2.inpaint(metallic, mask_inv, 1, cv2.INPAINT_TELEA)[..., None]
     roughness = cv2.inpaint(roughness, mask_inv, 1, cv2.INPAINT_TELEA)[..., None]
     alpha = cv2.inpaint(alpha, mask_inv, 1, cv2.INPAINT_TELEA)[..., None]
+    if normal_tex is not None:
+        normal_tex = cv2.inpaint(normal_tex.cpu().numpy(), mask_inv, 1, cv2.INPAINT_TELEA)
     
     # Create PBR material
     # Standard PBR packs Metallic and Roughness into Blue and Green channels
@@ -301,6 +323,7 @@ def to_glb(
         roughnessFactor=1.0,
         alphaMode=alpha_mode,
         doubleSided=True if not remesh else False,
+        normalTexture=Image.fromarray(normal_tex) if normal_tex is not None else None,
     )
     
     # --- Coordinate System Conversion & Final Object ---

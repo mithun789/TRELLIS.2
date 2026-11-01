@@ -69,7 +69,7 @@ def from_pretrained(path: str, quantize_bits: int = 0, quantize_dtype: str = 'fl
     model.load_state_dict(load_file(model_file), strict=False)
 
     if quantize_bits == 4:
-        from .quantization import quantize_model
+        from ..quantization import quantize_model
         dtype = {
             'f16': torch.float16,
             'fp16': torch.float16,

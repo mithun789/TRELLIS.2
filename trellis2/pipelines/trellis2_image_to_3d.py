@@ -143,10 +143,10 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         else:
             input = input.convert('RGB')
             if self.low_vram:
-                self.rembg_model.to(self.device)
+                self._onload(self.rembg_model)
             output = self.rembg_model(input)
             if self.low_vram:
-                self.rembg_model.cpu()
+                self._offload(self.rembg_model)
         output_np = np.array(output)
         alpha = output_np[:, :, 3]
         bbox = np.argwhere(alpha > 0.8 * 255)
@@ -173,10 +173,10 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         """
         self.image_cond_model.image_size = resolution
         if self.low_vram:
-            self.image_cond_model.to(self.device)
+            self._onload(self.image_cond_model)
         cond = self.image_cond_model(image)
         if self.low_vram:
-            self.image_cond_model.cpu()
+            self._offload(self.image_cond_model)
         if not include_neg_cond:
             return {'cond': cond}
         neg_cond = torch.zeros_like(cond)
@@ -208,7 +208,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         noise = torch.randn(num_samples, in_channels, reso, reso, reso).to(self.device)
         sampler_params = {**self.sparse_structure_sampler_params, **sampler_params}
         if self.low_vram:
-            flow_model.to(self.device)
+            self._onload(flow_model)
         z_s = self.sparse_structure_sampler.sample(
             flow_model,
             noise,
@@ -218,15 +218,15 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             tqdm_desc="Sampling sparse structure",
         ).samples
         if self.low_vram:
-            flow_model.cpu()
+            self._offload(flow_model)
         
         # Decode sparse structure latent
         decoder = self.models['sparse_structure_decoder']
         if self.low_vram:
-            decoder.to(self.device)
+            self._onload(decoder)
         decoded = decoder(z_s)>0
         if self.low_vram:
-            decoder.cpu()
+            self._offload(decoder)
         if resolution != decoded.shape[2]:
             ratio = decoded.shape[2] // resolution
             decoded = torch.nn.functional.max_pool3d(decoded.float(), ratio, ratio, 0) > 0.5
@@ -256,7 +256,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         )
         sampler_params = {**self.shape_slat_sampler_params, **sampler_params}
         if self.low_vram:
-            flow_model.to(self.device)
+            self._onload(flow_model)
         slat = self.shape_slat_sampler.sample(
             flow_model,
             noise,
@@ -266,7 +266,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             tqdm_desc="Sampling shape SLat",
         ).samples
         if self.low_vram:
-            flow_model.cpu()
+            self._offload(flow_model)
 
         std = torch.tensor(self.shape_slat_normalization['std'])[None].to(slat.device)
         mean = torch.tensor(self.shape_slat_normalization['mean'])[None].to(slat.device)
@@ -301,7 +301,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         )
         sampler_params = {**self.shape_slat_sampler_params, **sampler_params}
         if self.low_vram:
-            flow_model_lr.to(self.device)
+            self._onload(flow_model_lr)
         slat = self.shape_slat_sampler.sample(
             flow_model_lr,
             noise,
@@ -311,18 +311,18 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             tqdm_desc="Sampling shape SLat",
         ).samples
         if self.low_vram:
-            flow_model_lr.cpu()
+            self._offload(flow_model_lr)
         std = torch.tensor(self.shape_slat_normalization['std'])[None].to(slat.device)
         mean = torch.tensor(self.shape_slat_normalization['mean'])[None].to(slat.device)
         slat = slat * std + mean
         
         # Upsample
         if self.low_vram:
-            self.models['shape_slat_decoder'].to(self.device)
+            self._onload(self.models['shape_slat_decoder'])
             self.models['shape_slat_decoder'].low_vram = True
         hr_coords = self.models['shape_slat_decoder'].upsample(slat, upsample_times=4)
         if self.low_vram:
-            self.models['shape_slat_decoder'].cpu()
+            self._offload(self.models['shape_slat_decoder'])
             self.models['shape_slat_decoder'].low_vram = False
         hr_resolution = resolution
         while True:
@@ -345,7 +345,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         )
         sampler_params = {**self.shape_slat_sampler_params, **sampler_params}
         if self.low_vram:
-            flow_model.to(self.device)
+            self._onload(flow_model)
         slat = self.shape_slat_sampler.sample(
             flow_model,
             noise,
@@ -355,7 +355,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             tqdm_desc="Sampling shape SLat",
         ).samples
         if self.low_vram:
-            flow_model.cpu()
+            self._offload(flow_model)
 
         std = torch.tensor(self.shape_slat_normalization['std'])[None].to(slat.device)
         mean = torch.tensor(self.shape_slat_normalization['mean'])[None].to(slat.device)
@@ -380,11 +380,11 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         """
         self.models['shape_slat_decoder'].set_resolution(resolution)
         if self.low_vram:
-            self.models['shape_slat_decoder'].to(self.device)
+            self._onload(self.models['shape_slat_decoder'])
             self.models['shape_slat_decoder'].low_vram = True
         ret = self.models['shape_slat_decoder'](slat, return_subs=True)
         if self.low_vram:
-            self.models['shape_slat_decoder'].cpu()
+            self._offload(self.models['shape_slat_decoder'])
             self.models['shape_slat_decoder'].low_vram = False
         return ret
     
@@ -412,7 +412,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         noise = shape_slat.replace(feats=torch.randn(shape_slat.coords.shape[0], in_channels - shape_slat.feats.shape[1]).to(self.device))
         sampler_params = {**self.tex_slat_sampler_params, **sampler_params}
         if self.low_vram:
-            flow_model.to(self.device)
+            self._onload(flow_model)
         slat = self.tex_slat_sampler.sample(
             flow_model,
             noise,
@@ -423,7 +423,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             tqdm_desc="Sampling texture SLat",
         ).samples
         if self.low_vram:
-            flow_model.cpu()
+            self._offload(flow_model)
 
         std = torch.tensor(self.tex_slat_normalization['std'])[None].to(slat.device)
         mean = torch.tensor(self.tex_slat_normalization['mean'])[None].to(slat.device)
@@ -446,10 +446,10 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             SparseTensor: The decoded texture voxels
         """
         if self.low_vram:
-            self.models['tex_slat_decoder'].to(self.device)
+            self._onload(self.models['tex_slat_decoder'])
         ret = self.models['tex_slat_decoder'](slat, guide_subs=subs) * 0.5 + 0.5
         if self.low_vram:
-            self.models['tex_slat_decoder'].cpu()
+            self._offload(self.models['tex_slat_decoder'])
         return ret
     
     @torch.no_grad()
