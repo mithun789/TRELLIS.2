@@ -1,7 +1,7 @@
 """
 Convert a TRELLIS.2 GLB to FBX with embedded PBR textures.
 
-Runs inside Blender (or the `bpy` pip package):
+Runs inside Blender 4.2+ or 5.x (or the `bpy` pip package):
     blender -b --factory-startup -P blender_glb_to_fbx.py -- input.glb output.fbx
 
 glTF packs roughness (G) and metallic (B) into one texture. The FBX exporter
@@ -52,7 +52,8 @@ def _new_gray_image(name, width, height, values, workdir):
 
 def _split_metallic_roughness(material, workdir):
     """Rewire glTF metallicRoughness (Separate Color node) into two direct textures."""
-    if not material.use_nodes:
+    # node_tree check instead of Material.use_nodes, which Blender 5 deprecates.
+    if material.node_tree is None:
         return
     nodes, links = material.node_tree.nodes, material.node_tree.links
     bsdf = next((n for n in nodes if n.type == 'BSDF_PRINCIPLED'), None)
@@ -107,7 +108,12 @@ def _ensure_packed_png(image, workdir):
     bpy.data.images.remove(image)
 
 
+MIN_VERSION = (4, 2, 0)
+
+
 def convert(input_glb: str, output_fbx: str) -> None:
+    if tuple(bpy.app.version) < MIN_VERSION:
+        raise RuntimeError(f'Blender {bpy.app.version_string} is too old. FBX export needs Blender 4.2 or newer (4.x and 5.x work).')
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.gltf(filepath=os.path.abspath(input_glb))
 

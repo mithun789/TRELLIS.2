@@ -6,7 +6,8 @@ runs through Blender. Two ways to provide it:
 
 1. The `bpy` pip package (Blender as a Python module):
        pip install bpy          # needs the Python version bpy was built for
-2. A Blender install (4.2 or newer), e.g. `. ./setup.sh --blender`.
+2. A Blender install, 4.2 or newer. Blender 4.x and 5.x both work.
+   `. ./setup.sh --blender` installs 5.2 LTS.
    Or put `blender` on PATH, or set
        export TRELLIS2_BLENDER=/path/to/blender
 
@@ -16,28 +17,85 @@ Usage:
 
     glb_to_fbx('model.glb', 'model.fbx')   # convert an existing GLB
 """
+import functools
+import glob
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
-from typing import Optional
+from typing import Optional, Tuple
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'blender_glb_to_fbx.py')
 
-_KNOWN_BLENDERS = (
-    # setup.sh --blender
-    os.path.expanduser('~/.local/share/trellis2/blender-4.5.1-linux-x64/blender'),
+MIN_BLENDER_VERSION = (4, 2, 0)
+
+_SEARCH_PATTERNS = (
+    # setup.sh --blender (any version)
+    os.path.expanduser('~/.local/share/trellis2/blender-*-linux-x64/blender'),
     # data_toolkit/dump_mesh.py
-    '/tmp/blender-4.5.1-linux-x64/blender',
+    '/tmp/blender-*-linux-x64/blender',
+    # macOS
+    '/Applications/Blender*.app/Contents/MacOS/Blender',
+    # Windows
+    'C:/Program Files/Blender Foundation/Blender */blender.exe',
 )
 
 
+def _version_from_text(text: str) -> Optional[Tuple[int, ...]]:
+    match = re.search(r'(\d+)\.(\d+)(?:\.(\d+))?', text)
+    if match is None:
+        return None
+    return tuple(int(g or 0) for g in match.groups())
+
+
+@functools.lru_cache(maxsize=None)
+def blender_version(exe: str) -> Optional[Tuple[int, ...]]:
+    """Version of a Blender executable, e.g. (5, 2, 3). None if it does not run."""
+    try:
+        out = subprocess.run([exe, '--version'], capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in out.splitlines():
+        if line.startswith('Blender'):
+            return _version_from_text(line)
+    return None
+
+
+def _is_executable(path: Optional[str]) -> bool:
+    return bool(path) and os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def _discovered_blenders():
+    found = []
+    for pattern in _SEARCH_PATTERNS:
+        found += [p for p in glob.glob(pattern) if _is_executable(p)]
+    # Newest version first, judged by the folder name (blender-5.2.3-linux-x64).
+    return sorted(set(found), key=lambda p: _version_from_text(os.path.basename(os.path.dirname(p))) or (0,), reverse=True)
+
+
 def find_blender(blender: Optional[str] = None) -> Optional[str]:
-    """Return a Blender executable path, or None."""
-    for candidate in (blender, os.environ.get('TRELLIS2_BLENDER'), shutil.which('blender'), *_KNOWN_BLENDERS):
-        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+    """
+    Return a Blender executable path (4.2 or newer), or None.
+
+    Order: the `blender` argument, `TRELLIS2_BLENDER`, `blender` on PATH, then
+    known install folders, newest version first.
+    """
+    explicit = blender or os.environ.get('TRELLIS2_BLENDER')
+    if explicit:
+        if not _is_executable(explicit):
+            raise RuntimeError(f'Blender not found or not executable: {explicit}')
+        version = blender_version(explicit)
+        if version is not None and version < MIN_BLENDER_VERSION:
+            raise RuntimeError(f'{explicit} is Blender {".".join(map(str, version))}. FBX export needs 4.2 or newer.')
+        return explicit
+    for candidate in [shutil.which('blender'), *_discovered_blenders()]:
+        if not _is_executable(candidate):
+            continue
+        version = blender_version(candidate)
+        if version is None or version >= MIN_BLENDER_VERSION:
             return candidate
     return None
 
@@ -68,8 +126,8 @@ def glb_to_fbx(glb_path: str, fbx_path: str, blender: Optional[str] = None, time
         cmd = [sys.executable, SCRIPT, glb_path, fbx_path]
     else:
         raise RuntimeError(
-            'FBX export needs Blender. Install the bpy package (pip install bpy) '
-            'or Blender 4.2+, then put blender on PATH or set TRELLIS2_BLENDER.'
+            'FBX export needs Blender 4.2+ or 5.x. Run `. ./setup.sh --blender`, '
+            'install the bpy package (pip install bpy), put blender on PATH, or set TRELLIS2_BLENDER.'
         )
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0 or not os.path.isfile(fbx_path):

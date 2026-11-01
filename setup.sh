@@ -1,5 +1,5 @@
 # Read Arguments
-TEMP=`getopt -o h --long help,new-env,basic,flash-attn,cumesh,o-voxel,flexgemm,nvdiffrast,nvdiffrec,blender -n 'setup.sh' -- "$@"`
+TEMP=`getopt -o h --long help,new-env,basic,flash-attn,cumesh,o-voxel,flexgemm,nvdiffrast,nvdiffrec,blender,blender-version: -n 'setup.sh' -- "$@"`
 
 eval set -- "$TEMP"
 
@@ -13,6 +13,7 @@ FLEXGEMM=false
 NVDIFFRAST=false
 NVDIFFREC=false
 BLENDER=false
+BLENDER_VERSION=5.2.3
 ERROR=false
 
 
@@ -32,6 +33,7 @@ while true ; do
         --nvdiffrast) NVDIFFRAST=true ; shift ;;
         --nvdiffrec) NVDIFFREC=true ; shift ;;
         --blender) BLENDER=true ; shift ;;
+        --blender-version) BLENDER_VERSION="$2" ; shift 2 ;;
         --) shift ; break ;;
         *) ERROR=true ; break ;;
     esac
@@ -54,7 +56,8 @@ if [ "$HELP" = true ] ; then
     echo "  --flexgemm              Install flexgemm"
     echo "  --nvdiffrast            Install nvdiffrast"
     echo "  --nvdiffrec             Install nvdiffrec"
-    echo "  --blender               Install Blender 4.5 LTS (for FBX export)"
+    echo "  --blender               Install Blender for FBX export (default 5.2.3 LTS)"
+    echo "  --blender-version VER   Blender version for --blender, e.g. 4.5.1 or 5.2.3 (4.2+)"
     return
 fi
 
@@ -143,11 +146,13 @@ fi
 
 if [ "$BLENDER" = true ] ; then
     BLENDER_DIR="$HOME/.local/share/trellis2"
-    BLENDER_NAME="blender-4.5.1-linux-x64"
+    BLENDER_SERIES=$(echo "$BLENDER_VERSION" | cut -d. -f1,2)
+    BLENDER_NAME="blender-$BLENDER_VERSION-linux-x64"
     if [ ! -x "$BLENDER_DIR/$BLENDER_NAME/blender" ] ; then
         mkdir -p "$BLENDER_DIR"
         wget -q --show-progress -O "$BLENDER_DIR/$BLENDER_NAME.tar.xz" \
-            "https://download.blender.org/release/Blender4.5/$BLENDER_NAME.tar.xz"
+            "https://download.blender.org/release/Blender$BLENDER_SERIES/$BLENDER_NAME.tar.xz" \
+            || { echo "Error: Blender $BLENDER_VERSION download failed. Check the version at https://download.blender.org/release/"; rm -f "$BLENDER_DIR/$BLENDER_NAME.tar.xz"; return 1; }
         tar -xf "$BLENDER_DIR/$BLENDER_NAME.tar.xz" -C "$BLENDER_DIR"
         rm "$BLENDER_DIR/$BLENDER_NAME.tar.xz"
     fi

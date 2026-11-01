@@ -97,7 +97,8 @@ Data processing is streamlined for instant conversions that are fully **renderin
         --flexgemm              Install flexgemm
         --nvdiffrast            Install nvdiffrast
         --nvdiffrec             Install nvdiffrec
-    --blender               Install Blender 4.5 LTS (for FBX export)
+    --blender               Install Blender for FBX export (default 5.2.3 LTS)
+    --blender-version VER   Blender version for --blender, e.g. 4.5.1 or 5.2.3 (4.2+)
     ```
 
 ## 📦 Pretrained Weights
@@ -216,13 +217,16 @@ Notes:
 
 Save assets as `.fbx` for Unity, Unreal, Maya, and 3ds Max. The FBX embeds the base color, alpha, roughness, metallic, and normal map textures as PNG.
 
-FBX export runs through Blender. Install it once:
+FBX export runs through Blender 4.2 or newer. Blender 4.x and 5.x both work. Install it once:
 
 ```sh
-. ./setup.sh --blender      # downloads Blender 4.5 LTS to ~/.local/share/trellis2
+. ./setup.sh --blender                           # Blender 5.2.3 LTS to ~/.local/share/trellis2
+. ./setup.sh --blender --blender-version 4.5.1   # a different version
 ```
 
-Other options: the `bpy` pip package (needs the Python version bpy was built for), Blender on your `PATH`, or `TRELLIS2_BLENDER=/path/to/blender`.
+Other options:
+- Blender on your `PATH`, or `TRELLIS2_BLENDER=/path/to/blender`. With several installs, the newest version wins.
+- The `bpy` pip package. `bpy` 5.2 needs Python 3.13, `bpy` 4.5 needs Python 3.11.
 
 ```sh
 # Generate and export GLB + FBX
